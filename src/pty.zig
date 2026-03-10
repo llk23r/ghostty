@@ -73,6 +73,11 @@ const NullPty = struct {
         _ = size;
     }
 
+    pub fn slaveName(self: NullPty) ?[*:0]const u8 {
+        _ = self;
+        return null;
+    }
+
     pub const ChildPreExecError = error{};
 
     pub fn childPreExec(self: Pty) ChildPreExecError!void {
