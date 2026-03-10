@@ -53,6 +53,22 @@ final class ScriptTerminal: NSObject {
         return surfaceView?.pwd ?? ""
     }
 
+    /// Exposed as the AppleScript `tty` property.
+    ///
+    /// Returns the slave PTY device path (e.g. "/dev/ttys004") for this
+    /// terminal surface.
+    @objc(tty)
+    var tty: String {
+        guard NSApp.isAppleScriptEnabled else { return "" }
+        guard let surface = surfaceView?.surface else { return "" }
+        let bufSize = 256
+        var buf = [CChar](repeating: 0, count: bufSize)
+        let len = ghostty_surface_pty_name(surface, &buf, UInt(bufSize))
+        guard len > 0 else { return "" }
+        buf[min(Int(len), bufSize - 1)] = 0
+        return String(cString: buf)
+    }
+
     /// Used by command handling (`perform action ... on <terminal>`).
     func perform(action: String) -> Bool {
         guard NSApp.isAppleScriptEnabled else { return false }

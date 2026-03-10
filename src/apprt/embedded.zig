@@ -1998,6 +1998,24 @@ pub const CAPI = struct {
         );
     }
 
+    /// Returns the slave PTY device name (e.g. "/dev/ttys004") for this
+    /// surface. Copies the name into `buf` and returns the number of bytes
+    /// written. Returns 0 if unavailable.
+    export fn ghostty_surface_pty_name(
+        surface: *Surface,
+        buf: [*]u8,
+        buf_len: usize,
+    ) usize {
+        const pty = switch (surface.core_surface.io.backend) {
+            .exec => |*exec| exec.subprocess.pty,
+        } orelse return 0;
+        const name_ptr = pty.slaveName() orelse return 0;
+        const name = std.mem.span(name_ptr);
+        const copy_len = @min(name.len, buf_len);
+        @memcpy(buf[0..copy_len], name[0..copy_len]);
+        return copy_len;
+    }
+
     export fn ghostty_surface_inspector(ptr: *Surface) ?*Inspector {
         return ptr.initInspector() catch |err| {
             log.err("error initializing inspector err={}", .{err});
