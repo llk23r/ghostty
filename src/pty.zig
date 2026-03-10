@@ -98,6 +98,7 @@ const PosixPty = struct {
         .macos => @cImport({
             @cInclude("sys/ioctl.h"); // ioctl and constants
             @cInclude("util.h"); // openpty()
+            @cInclude("stdlib.h"); // ptsname()
         }),
         .freebsd => @cImport({
             @cInclude("termios.h"); // ioctl and constants
@@ -206,6 +207,13 @@ const PosixPty = struct {
     pub fn setSize(self: *Pty, size: winsize) SetSizeError!void {
         if (c.ioctl(self.master, TIOCSWINSZ, @intFromPtr(&size)) < 0)
             return error.IoctlFailed;
+    }
+
+    /// Returns the slave device path (e.g. "/dev/ttys004") for this PTY.
+    /// Uses ptsname() on the master fd. Not thread-safe (static buffer),
+    /// but safe when called from a single thread.
+    pub fn slaveName(self: PosixPty) ?[*:0]const u8 {
+        return c.ptsname(self.master);
     }
 
     pub const ChildPreExecError = error{ OperationNotSupported, ProcessGroupFailed, SetControllingTerminalFailed };
