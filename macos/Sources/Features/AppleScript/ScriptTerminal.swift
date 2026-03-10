@@ -1,4 +1,5 @@
 import AppKit
+import GhosttyKit
 
 /// AppleScript-facing wrapper around a live Ghostty terminal surface.
 ///
