@@ -286,6 +286,23 @@
         <cocoa key="terminal"/>
       </parameter>
     </command>
+
+    <enumeration name="turn position" code="GTpP" description="Whether to read from the start or end of the scrollback.">
+      <enumerator name="last" code="GTpl" description="Read the last (most recent) turns."/>
+      <enumerator name="first" code="GTpf" description="Read the first (oldest) turns."/>
+    </enumeration>
+
+    <command name="read turns" code="GhstRdTn" description="Read N command turns (prompt + input + output) from a terminal. Requires shell integration.">
+      <cocoa class="GhosttyScriptReadTurnsCommand"/>
+      <direct-parameter type="integer" description="Number of turns to read (default: 1)."/>
+      <parameter name="from" code="GRtT" type="terminal" description="The terminal to read from.">
+        <cocoa key="terminal"/>
+      </parameter>
+      <parameter name="position" code="GTpD" type="turn position" optional="yes" description="Read from the start or end. Default: last.">
+        <cocoa key="position"/>
+      </parameter>
+      <result type="text" description="The text content of the requested turns."/>
+    </command>
   </suite>
 
   <!--
