@@ -1136,6 +1136,8 @@ void* ghostty_surface_quicklook_font(ghostty_surface_t);
 bool ghostty_surface_quicklook_word(ghostty_surface_t, ghostty_text_s*);
 #endif
 
+bool ghostty_surface_read_last_turns(ghostty_surface_t, uint32_t, ghostty_text_s*);
+bool ghostty_surface_read_first_turns(ghostty_surface_t, uint32_t, ghostty_text_s*);
 uintptr_t ghostty_surface_pty_name(ghostty_surface_t, char*, uintptr_t);
 ghostty_inspector_t ghostty_surface_inspector(ghostty_surface_t);
 void ghostty_inspector_free(ghostty_surface_t);

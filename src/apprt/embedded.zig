@@ -1998,6 +1998,69 @@ pub const CAPI = struct {
         );
     }
 
+    /// Reads the last `n` command turns (prompt + input + output) from the
+    /// terminal. Requires shell integration for semantic prompt markers.
+    export fn ghostty_surface_read_last_turns(
+        surface: *Surface,
+        n: u32,
+        result: *Text,
+    ) bool {
+        const core_surface = &surface.core_surface;
+        core_surface.renderer_state.mutex.lock();
+        defer core_surface.renderer_state.mutex.unlock();
+
+        const screen = core_surface.io.terminal.screens.active;
+        const br_pin = screen.pages.getBottomRight(.screen) orelse return false;
+
+        // Walk backwards to find the Nth prompt.
+        var it = br_pin.promptIterator(.left_up, null);
+        var prompt_pin: ?@TypeOf(br_pin) = null;
+        var count: u32 = 0;
+        while (it.next()) |p| {
+            prompt_pin = p;
+            count += 1;
+            if (count >= n) break;
+        }
+
+        const start_pin = prompt_pin orelse return false;
+        const sel = terminal.Selection.init(start_pin, br_pin, false);
+        return readTextLocked(surface, sel, result);
+    }
+
+    /// Same as ghostty_surface_read_last_turns but reads from the top
+    /// of the scrollback instead of the bottom.
+    export fn ghostty_surface_read_first_turns(
+        surface: *Surface,
+        n: u32,
+        result: *Text,
+    ) bool {
+        const core_surface = &surface.core_surface;
+        core_surface.renderer_state.mutex.lock();
+        defer core_surface.renderer_state.mutex.unlock();
+
+        const screen = core_surface.io.terminal.screens.active;
+        const tl_pin = screen.pages.getTopLeft(.screen);
+
+        // Walk forward to find N prompts.
+        var it = tl_pin.promptIterator(.right_down, null);
+        var count: u32 = 0;
+        while (it.next()) |_| {
+            count += 1;
+            if (count >= n) break;
+        }
+        if (count == 0) return false;
+
+        // End one row before the next prompt, or at the bottom of
+        // the screen if there is no next prompt.
+        const end_pin = if (it.next()) |next_prompt|
+            next_prompt.up(1).?
+        else
+            screen.pages.getBottomRight(.screen) orelse return false;
+
+        const sel = terminal.Selection.init(tl_pin, end_pin, false);
+        return readTextLocked(surface, sel, result);
+    }
+
     /// Returns the slave PTY device name (e.g. "/dev/ttys004") for this
     /// surface. Copies the name into `buf` and returns the number of bytes
     /// written. Returns 0 if unavailable.
