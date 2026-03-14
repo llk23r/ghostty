@@ -1,15 +1,28 @@
 import AppKit
 import AppIntents
+import GhosttyKit
 import SwiftUI
 
 struct TerminalEntity: AppEntity {
     let id: UUID
+
+    @Property(title: "Surface ID")
+    var surfaceID: String
 
     @Property(title: "Title")
     var title: String
 
     @Property(title: "Working Directory")
     var workingDirectory: String?
+
+    @Property(title: "TTY")
+    var tty: String?
+
+    @Property(title: "Tab ID")
+    var tabID: String?
+
+    @Property(title: "Window ID")
+    var windowID: String?
 
     @Property(title: "Kind")
     var kind: Kind
@@ -46,15 +59,44 @@ struct TerminalEntity: AppEntity {
 
     @MainActor
     init(_ view: Ghostty.SurfaceView) {
+        let controller = NSApp.windows
+            .compactMap { $0.windowController as? BaseTerminalController }
+            .first { controller in
+                controller.surfaceTree.contains(where: { $0 === view })
+            }
+
         self.id = view.id
+        self.surfaceID = view.id.uuidString
         self.title = view.title
         self.workingDirectory = view.pwd
+        if let surface = view.surface {
+            let bufSize = 256
+            var buf = [CChar](repeating: 0, count: bufSize)
+            let len = ghostty_surface_pty_name(surface, &buf, UInt(bufSize))
+            if len > 0 {
+                buf[min(Int(len), bufSize - 1)] = 0
+                self.tty = String(cString: buf)
+            } else {
+                self.tty = nil
+            }
+        } else {
+            self.tty = nil
+        }
+
+        if let controller {
+            self.tabID = ScriptTab.stableID(controller: controller)
+            self.windowID = ScriptWindow.stableID(primaryController: controller)
+        } else {
+            self.tabID = nil
+            self.windowID = nil
+        }
+
         if let nsImage = ImageRenderer(content: view.screenshot()).nsImage {
             self.screenshot = nsImage
         }
 
         // Determine the kind based on the window controller type
-        if view.window?.windowController is QuickTerminalController {
+        if controller is QuickTerminalController {
             self.kind = .quick
         } else {
             self.kind = .normal
