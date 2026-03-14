@@ -33,8 +33,12 @@ struct GetTerminalDetailsIntent: AppIntent {
         }
 
         switch detail {
+        case .surfaceID: return .result(value: terminal.surfaceID)
         case .title: return .result(value: terminal.title)
         case .workingDirectory: return .result(value: terminal.workingDirectory)
+        case .tty: return .result(value: terminal.tty)
+        case .tabID: return .result(value: terminal.tabID)
+        case .windowID: return .result(value: terminal.windowID)
         case .allContents:
             guard let view = terminal.surfaceView else { throw GhosttyIntentError.surfaceNotFound }
             return .result(value: view.cachedScreenContents.get())
@@ -51,8 +55,12 @@ struct GetTerminalDetailsIntent: AppIntent {
 // MARK: TerminalDetail
 
 enum TerminalDetail: String {
+    case surfaceID
     case title
     case workingDirectory
+    case tty
+    case tabID
+    case windowID
     case allContents
     case selectedText
     case visibleText
@@ -62,8 +70,12 @@ extension TerminalDetail: AppEnum {
     static var typeDisplayRepresentation = TypeDisplayRepresentation(name: "Terminal Detail")
 
     static var caseDisplayRepresentations: [Self: DisplayRepresentation] = [
+        .surfaceID: .init(title: "Surface ID"),
         .title: .init(title: "Title"),
         .workingDirectory: .init(title: "Working Directory"),
+        .tty: .init(title: "TTY"),
+        .tabID: .init(title: "Tab ID"),
+        .windowID: .init(title: "Window ID"),
         .allContents: .init(title: "Full Contents"),
         .selectedText: .init(title: "Selected Text"),
         .visibleText: .init(title: "Visible Text"),
