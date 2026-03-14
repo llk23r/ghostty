@@ -12,27 +12,47 @@ import AppKit
 /// - `property title` -> `@objc(title)` getter below.
 /// - `property working directory` -> `@objc(workingDirectory)` getter below.
 ///
-/// We keep only a weak reference to the underlying `SurfaceView` so this
-/// wrapper never extends the terminal's lifetime.
+/// We keep a weak fallback reference to the underlying `SurfaceView`, while
+/// resolving current state through the shared terminal hierarchy snapshot.
 @MainActor
 @objc(GhosttyScriptTerminal)
 final class ScriptTerminal: NSObject {
-    /// Weak reference to the underlying surface. Package-visible so that
-    /// other AppleScript command handlers (e.g. `ScriptSplitCommand`) can
-    /// access the live surface without exposing it to ObjC/AppleScript.
-    weak var surfaceView: Ghostty.SurfaceView?
+    private let terminalID: String
+    private weak var fallbackSurfaceView: Ghostty.SurfaceView?
 
-    init(surfaceView: Ghostty.SurfaceView) {
-        self.surfaceView = surfaceView
+    init(stableID: String, surfaceView: Ghostty.SurfaceView? = nil) {
+        self.terminalID = stableID
+        self.fallbackSurfaceView = surfaceView
+    }
+
+    convenience init(_ stableID: String) {
+        self.init(stableID: stableID)
+    }
+
+    convenience init(surfaceView: Ghostty.SurfaceView) {
+        self.init(
+            stableID: Ghostty.TerminalHierarchy.surfaceID(for: surfaceView),
+            surfaceView: surfaceView
+        )
+    }
+
+    /// Package-visible so other AppleScript command handlers can access the
+    /// live surface without exposing it to ObjC/AppleScript.
+    var surfaceView: Ghostty.SurfaceView? {
+        hierarchyTerminal?.surfaceView ?? fallbackSurfaceView
+    }
+
+    private var hierarchyTerminal: Ghostty.TerminalHierarchy.Snapshot.Terminal? {
+        Ghostty.TerminalHierarchy.snapshot().terminal(id: terminalID)
     }
 
     private var controller: BaseTerminalController? {
+        if let hierarchyTerminal {
+            return hierarchyTerminal.controller
+        }
+
         guard let surfaceView else { return nil }
-        return NSApp.windows
-            .compactMap { $0.windowController as? BaseTerminalController }
-            .first { controller in
-                controller.surfaceTree.contains(where: { $0 === surfaceView })
-            }
+        return Ghostty.TerminalHierarchy.controller(for: surfaceView)
     }
 
     /// Exposed as the AppleScript `id` property.
@@ -42,14 +62,14 @@ final class ScriptTerminal: NSObject {
     @objc(id)
     var stableID: String {
         guard NSApp.isAppleScriptEnabled else { return "" }
-        return surfaceView?.id.uuidString ?? ""
+        return terminalID
     }
 
     /// Exposed as the AppleScript `title` property.
     @objc(title)
     var title: String {
         guard NSApp.isAppleScriptEnabled else { return "" }
-        return surfaceView?.title ?? ""
+        return hierarchyTerminal?.title ?? surfaceView?.title ?? ""
     }
 
     /// Exposed as the AppleScript `working directory` property.
@@ -59,13 +79,25 @@ final class ScriptTerminal: NSObject {
     @objc(workingDirectory)
     var workingDirectory: String {
         guard NSApp.isAppleScriptEnabled else { return "" }
-        return surfaceView?.pwd ?? ""
+        return hierarchyTerminal?.workingDirectory ?? surfaceView?.pwd ?? ""
     }
 
     /// Exposed as the AppleScript `tab` property.
     @objc(scriptTab)
     var scriptTab: ScriptTab? {
         guard NSApp.isAppleScriptEnabled else { return nil }
+        if let hierarchyTerminal {
+            let scriptWindow = ScriptWindow(
+                stableID: hierarchyTerminal.windowID,
+                primaryController: hierarchyTerminal.controller
+            )
+            return ScriptTab(
+                window: scriptWindow,
+                stableID: hierarchyTerminal.tabID,
+                controller: hierarchyTerminal.controller
+            )
+        }
+
         guard let controller else { return nil }
         guard let scriptWindow else { return nil }
         return ScriptTab(window: scriptWindow, controller: controller)
@@ -75,6 +107,13 @@ final class ScriptTerminal: NSObject {
     @objc(scriptWindow)
     var scriptWindow: ScriptWindow? {
         guard NSApp.isAppleScriptEnabled else { return nil }
+        if let hierarchyTerminal {
+            return ScriptWindow(
+                stableID: hierarchyTerminal.windowID,
+                primaryController: hierarchyTerminal.controller
+            )
+        }
+
         guard let controller else { return nil }
         return ScriptWindow(primaryController: controller)
     }
@@ -86,13 +125,7 @@ final class ScriptTerminal: NSObject {
     @objc(tty)
     var tty: String {
         guard NSApp.isAppleScriptEnabled else { return "" }
-        guard let surface = surfaceView?.surface else { return "" }
-        let bufSize = 256
-        var buf = [CChar](repeating: 0, count: bufSize)
-        let len = ghostty_surface_pty_name(surface, &buf, UInt(bufSize))
-        guard len > 0 else { return "" }
-        buf[min(Int(len), bufSize - 1)] = 0
-        return String(cString: buf)
+        return hierarchyTerminal?.tty ?? surfaceView.flatMap(Ghostty.TerminalHierarchy.tty(for:)) ?? ""
     }
 
     /// Used by command handling (`perform action ... on <terminal>`).
@@ -138,7 +171,7 @@ final class ScriptTerminal: NSObject {
             baseConfig = nil
         }
 
-        guard let controller = surfaceView.window?.windowController as? BaseTerminalController else {
+        guard let controller else {
             command.scriptErrorNumber = errAEEventFailed
             command.scriptErrorString = "Terminal is not in a splittable window."
             return nil
@@ -168,7 +201,7 @@ final class ScriptTerminal: NSObject {
             return nil
         }
 
-        guard let controller = surfaceView.window?.windowController as? BaseTerminalController else {
+        guard let controller else {
             command.scriptErrorNumber = errAEEventFailed
             command.scriptErrorString = "Terminal is not in a window."
             return nil
@@ -189,7 +222,7 @@ final class ScriptTerminal: NSObject {
             return nil
         }
 
-        guard let controller = surfaceView.window?.windowController as? BaseTerminalController else {
+        guard let controller else {
             command.scriptErrorNumber = errAEEventFailed
             command.scriptErrorString = "Terminal is not in a window."
             return nil

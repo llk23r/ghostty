@@ -24,14 +24,25 @@ final class ScriptWindow: NSObject {
     /// is derived lazily from current AppKit state whenever needed.
     private weak var primaryController: BaseTerminalController?
 
+    init(stableID: String, primaryController: BaseTerminalController? = nil) {
+        self.stableID = stableID
+        self.primaryController = primaryController
+    }
+
     /// `scriptWindows` in `AppDelegate+AppleScript` constructs these objects.
     ///
     /// `stableID` must match the same identity scheme used by
     /// `valueInScriptWindowsWithUniqueID:` so Cocoa can re-resolve object
     /// specifiers produced earlier in a script.
-    init(primaryController: BaseTerminalController) {
-        self.stableID = Self.stableID(primaryController: primaryController)
-        self.primaryController = primaryController
+    convenience init(primaryController: BaseTerminalController) {
+        self.init(
+            stableID: Ghostty.TerminalHierarchy.windowID(for: primaryController),
+            primaryController: primaryController
+        )
+    }
+
+    private var hierarchyWindow: Ghostty.TerminalHierarchy.Snapshot.Window? {
+        Ghostty.TerminalHierarchy.snapshot().window(id: stableID)
     }
 
     /// Exposed as the AppleScript `id` property.
@@ -49,7 +60,7 @@ final class ScriptWindow: NSObject {
     @objc(title)
     var title: String {
         guard NSApp.isAppleScriptEnabled else { return "" }
-        return selectedController?.window?.title ?? ""
+        return hierarchyWindow?.title ?? selectedController?.window?.title ?? ""
     }
 
     /// Exposed as the AppleScript `tabs` element.
@@ -60,6 +71,13 @@ final class ScriptWindow: NSObject {
     @objc(tabs)
     var tabs: [ScriptTab] {
         guard NSApp.isAppleScriptEnabled else { return [] }
+        let snapshot = Ghostty.TerminalHierarchy.snapshot()
+        if let hierarchyWindow {
+            return hierarchyWindow.tabIDs.map {
+                ScriptTab(window: self, stableID: $0, controller: snapshot.tab(id: $0)?.controller)
+            }
+        }
+
         return controllers.map { ScriptTab(window: self, controller: $0) }
     }
 
@@ -69,6 +87,15 @@ final class ScriptWindow: NSObject {
     @objc(selectedTab)
     var selectedTab: ScriptTab? {
         guard NSApp.isAppleScriptEnabled else { return nil }
+        let snapshot = Ghostty.TerminalHierarchy.snapshot()
+        if let selectedTabID = hierarchyWindow?.selectedTabID {
+            return ScriptTab(
+                window: self,
+                stableID: selectedTabID,
+                controller: snapshot.tab(id: selectedTabID)?.controller
+            )
+        }
+
         guard let selectedController else { return nil }
         return ScriptTab(window: self, controller: selectedController)
     }
@@ -82,6 +109,11 @@ final class ScriptWindow: NSObject {
     @objc(valueInTabsWithUniqueID:)
     func valueInTabs(uniqueID: String) -> ScriptTab? {
         guard NSApp.isAppleScriptEnabled else { return nil }
+        let snapshot = Ghostty.TerminalHierarchy.snapshot()
+        if hierarchyWindow?.tabIDs.contains(uniqueID) == true {
+            return ScriptTab(window: self, stableID: uniqueID, controller: snapshot.tab(id: uniqueID)?.controller)
+        }
+
         guard let controller = controller(tabID: uniqueID) else { return nil }
         return ScriptTab(window: self, controller: controller)
     }
@@ -92,6 +124,10 @@ final class ScriptWindow: NSObject {
     @objc(terminals)
     var terminals: [ScriptTerminal] {
         guard NSApp.isAppleScriptEnabled else { return [] }
+        if let hierarchyWindow {
+            return hierarchyWindow.terminalIDs.map(ScriptTerminal.init)
+        }
+
         return controllers
             .flatMap { $0.surfaceTree.root?.leaves() ?? [] }
             .map(ScriptTerminal.init)
@@ -101,6 +137,10 @@ final class ScriptWindow: NSObject {
     @objc(valueInTerminalsWithUniqueID:)
     func valueInTerminals(uniqueID: String) -> ScriptTerminal? {
         guard NSApp.isAppleScriptEnabled else { return nil }
+        if hierarchyWindow?.terminalIDs.contains(uniqueID) == true {
+            return ScriptTerminal(stableID: uniqueID)
+        }
+
         return controllers
             .flatMap { $0.surfaceTree.root?.leaves() ?? [] }
             .first(where: { $0.id.uuidString == uniqueID })
@@ -111,30 +151,41 @@ final class ScriptWindow: NSObject {
     /// array index.
     func tabIndex(for controller: BaseTerminalController) -> Int? {
         guard NSApp.isAppleScriptEnabled else { return nil }
+        if let hierarchyWindow {
+            let tabID = Ghostty.TerminalHierarchy.tabID(for: controller)
+            return hierarchyWindow.tabIDs.firstIndex(of: tabID).map { $0 + 1 }
+        }
+
         return controllers.firstIndex(where: { $0 === controller }).map { $0 + 1 }
     }
 
     /// Reports whether a given controller maps to this window's selected tab.
     func tabIsSelected(_ controller: BaseTerminalController) -> Bool {
         guard NSApp.isAppleScriptEnabled else { return false }
+        if let selectedTabID = hierarchyWindow?.selectedTabID {
+            return selectedTabID == Ghostty.TerminalHierarchy.tabID(for: controller)
+        }
+
         return selectedController === controller
     }
 
     /// Best-effort native window to use as a tab parent for AppleScript commands.
     var preferredParentWindow: NSWindow? {
         guard NSApp.isAppleScriptEnabled else { return nil }
-        return selectedController?.window ?? controllers.first?.window
+        return hierarchyWindow?.window ?? selectedController?.window ?? controllers.first?.window
     }
 
     /// Best-effort controller to use for window-scoped AppleScript commands.
     var preferredController: BaseTerminalController? {
         guard NSApp.isAppleScriptEnabled else { return nil }
-        return selectedController ?? controllers.first
+        return hierarchyWindow?.preferredController ?? selectedController ?? controllers.first
     }
 
     /// Resolves a previously generated tab ID back to a live controller.
     private func controller(tabID: String) -> BaseTerminalController? {
-        controllers.first(where: { ScriptTab.stableID(controller: $0) == tabID })
+        let snapshot = Ghostty.TerminalHierarchy.snapshot()
+        return snapshot.tab(id: tabID)?.controller ??
+            controllers.first(where: { ScriptTab.stableID(controller: $0) == tabID })
     }
 
     /// Live controller list for this scripting window.
@@ -143,6 +194,11 @@ final class ScriptWindow: NSObject {
     /// changes (new tabs, closed tabs, tab moves) without rebuilding all objects.
     private var controllers: [BaseTerminalController] {
         guard NSApp.isAppleScriptEnabled else { return [] }
+        let snapshot = Ghostty.TerminalHierarchy.snapshot()
+        if let hierarchyWindow {
+            return hierarchyWindow.tabIDs.compactMap { snapshot.tab(id: $0)?.controller }
+        }
+
         guard let primaryController else { return [] }
         guard let window = primaryController.window else { return [primaryController] }
 
@@ -163,6 +219,11 @@ final class ScriptWindow: NSObject {
     /// AppKit tracks selected tab on `NSWindowTabGroup.selectedWindow`; for
     /// non-tabbed windows we fall back to the primary controller.
     private var selectedController: BaseTerminalController? {
+        let snapshot = Ghostty.TerminalHierarchy.snapshot()
+        if let selectedTabID = hierarchyWindow?.selectedTabID {
+            return snapshot.tab(id: selectedTabID)?.controller ?? hierarchyWindow?.preferredController
+        }
+
         guard let primaryController else { return nil }
         guard let window = primaryController.window else { return primaryController }
 
@@ -237,24 +298,16 @@ extension ScriptWindow {
     /// - Standalone windows are keyed by window identity.
     /// - Detached controllers fall back to controller identity.
     static func stableID(primaryController: BaseTerminalController) -> String {
-        guard let window = primaryController.window else {
-            return "controller-\(ObjectIdentifier(primaryController).hexString)"
-        }
-
-        if let tabGroup = window.tabGroup {
-            return stableID(tabGroup: tabGroup)
-        }
-
-        return stableID(window: window)
+        Ghostty.TerminalHierarchy.windowID(for: primaryController)
     }
 
     /// Stable ID for a standalone native window.
     static func stableID(window: NSWindow) -> String {
-        "window-\(ObjectIdentifier(window).hexString)"
+        Ghostty.TerminalHierarchy.windowID(for: window)
     }
 
     /// Stable ID for a native AppKit tab group.
     static func stableID(tabGroup: NSWindowTabGroup) -> String {
-        "tab-group-\(ObjectIdentifier(tabGroup).hexString)"
+        Ghostty.TerminalHierarchy.windowID(for: tabGroup)
     }
 }
