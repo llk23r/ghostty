@@ -28,6 +28,9 @@
       <responds-to command="quit">
         <cocoa method="handleQuitScriptCommand:"/>
       </responds-to>
+      <responds-to command="dump hierarchy">
+        <cocoa method="handleDumpHierarchyScriptCommand:"/>
+      </responds-to>
 
       <element type="window" access="r">
         <cocoa key="scriptWindows"/>
@@ -221,6 +224,10 @@
 
     <command name="close window" code="GhstClWn" description="Close a window.">
       <direct-parameter type="specifier" description="The window to close."/>
+    </command>
+
+    <command name="dump hierarchy" code="GhstHrch" description="Return a JSON snapshot of Ghostty windows, tabs, and terminals.">
+      <result type="text" description="JSON hierarchy snapshot."/>
     </command>
 
     <command name="input text" code="GhstInTx" description="Input text to a terminal as if it was pasted.">
