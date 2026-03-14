@@ -26,6 +26,15 @@ final class ScriptTerminal: NSObject {
         self.surfaceView = surfaceView
     }
 
+    private var controller: BaseTerminalController? {
+        guard let surfaceView else { return nil }
+        return NSApp.windows
+            .compactMap { $0.windowController as? BaseTerminalController }
+            .first { controller in
+                controller.surfaceTree.contains(where: { $0 === surfaceView })
+            }
+    }
+
     /// Exposed as the AppleScript `id` property.
     ///
     /// This is a stable UUID string for the life of a surface and is also used
@@ -51,6 +60,39 @@ final class ScriptTerminal: NSObject {
     var workingDirectory: String {
         guard NSApp.isAppleScriptEnabled else { return "" }
         return surfaceView?.pwd ?? ""
+    }
+
+    /// Exposed as the AppleScript `tab` property.
+    @objc(scriptTab)
+    var scriptTab: ScriptTab? {
+        guard NSApp.isAppleScriptEnabled else { return nil }
+        guard let controller else { return nil }
+        guard let scriptWindow else { return nil }
+        return ScriptTab(window: scriptWindow, controller: controller)
+    }
+
+    /// Exposed as the AppleScript `window` property.
+    @objc(scriptWindow)
+    var scriptWindow: ScriptWindow? {
+        guard NSApp.isAppleScriptEnabled else { return nil }
+        guard let controller else { return nil }
+        return ScriptWindow(primaryController: controller)
+    }
+
+    /// Exposed as the AppleScript `tty` property.
+    ///
+    /// Returns the slave PTY device path (e.g. "/dev/ttys004") for this
+    /// terminal surface.
+    @objc(tty)
+    var tty: String {
+        guard NSApp.isAppleScriptEnabled else { return "" }
+        guard let surface = surfaceView?.surface else { return "" }
+        let bufSize = 256
+        var buf = [CChar](repeating: 0, count: bufSize)
+        let len = ghostty_surface_pty_name(surface, &buf, UInt(bufSize))
+        guard len > 0 else { return "" }
+        buf[min(Int(len), bufSize - 1)] = 0
+        return String(cString: buf)
     }
 
     /// Used by command handling (`perform action ... on <terminal>`).

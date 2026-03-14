@@ -90,6 +90,13 @@
         <cocoa key="title"/>
       </property>
       <property name="working directory" code="Gwdr" type="text" access="r" description="Current working directory for the terminal process."/>
+      <property name="tab" code="GTrb" type="tab" access="r" description="Containing tab for this terminal.">
+        <cocoa key="scriptTab"/>
+      </property>
+      <property name="window" code="GTrw" type="window" access="r" description="Containing window for this terminal.">
+        <cocoa key="scriptWindow"/>
+      </property>
+      <property name="tty" code="Gtty" type="text" access="r" description="Slave pseudo-terminal device path (e.g. /dev/ttys004)."/>
       <responds-to command="split">
         <cocoa method="handleSplitCommand:"/>
       </responds-to>
