@@ -5,6 +5,79 @@ import GhosttyKit
 extension Ghostty {
     enum TerminalHierarchy {
         struct Snapshot {
+            private struct JSONSnapshot: Encodable {
+                struct Window: Encodable {
+                    let id: String
+                    let title: String
+                    let tabIDs: [String]
+                    let terminalIDs: [String]
+                    let selectedTabID: String?
+                    let isFocused: Bool
+                }
+
+                struct Tab: Encodable {
+                    let id: String
+                    let windowID: String
+                    let title: String
+                    let index: Int
+                    let isSelected: Bool
+                    let terminalIDs: [String]
+                    let focusedTerminalID: String?
+                }
+
+                struct Terminal: Encodable {
+                    let id: String
+                    let tabID: String
+                    let windowID: String
+                    let title: String
+                    let workingDirectory: String?
+                    let tty: String?
+                    let isFocused: Bool
+                    let isQuickTerminal: Bool
+                }
+
+                let version: Int = 1
+                let windows: [Window]
+                let tabs: [Tab]
+                let terminals: [Terminal]
+
+                init(snapshot: Snapshot) {
+                    self.windows = snapshot.windows.map {
+                        .init(
+                            id: $0.id,
+                            title: $0.title,
+                            tabIDs: $0.tabIDs,
+                            terminalIDs: $0.terminalIDs,
+                            selectedTabID: $0.selectedTabID,
+                            isFocused: $0.isFocused
+                        )
+                    }
+                    self.tabs = snapshot.tabs.map {
+                        .init(
+                            id: $0.id,
+                            windowID: $0.windowID,
+                            title: $0.title,
+                            index: $0.index,
+                            isSelected: $0.isSelected,
+                            terminalIDs: $0.terminalIDs,
+                            focusedTerminalID: $0.focusedTerminalID
+                        )
+                    }
+                    self.terminals = snapshot.terminals.map {
+                        .init(
+                            id: $0.id,
+                            tabID: $0.tabID,
+                            windowID: $0.windowID,
+                            title: $0.title,
+                            workingDirectory: $0.workingDirectory,
+                            tty: $0.tty,
+                            isFocused: $0.isFocused,
+                            isQuickTerminal: $0.isQuickTerminal
+                        )
+                    }
+                }
+            }
+
             struct Window {
                 let id: String
                 let title: String
@@ -75,6 +148,22 @@ extension Ghostty {
 
             func terminal(id: UUID) -> Terminal? {
                 terminalsByUUID[id]
+            }
+
+            func jsonString(pretty: Bool = false) throws -> String {
+                let encoder = JSONEncoder()
+                encoder.keyEncodingStrategy = .convertToSnakeCase
+                encoder.outputFormatting = [.sortedKeys]
+                if pretty {
+                    encoder.outputFormatting.insert(.prettyPrinted)
+                }
+
+                let data = try encoder.encode(JSONSnapshot(snapshot: self))
+                guard let result = String(bytes: data, encoding: .utf8) else {
+                    throw CocoaError(.fileReadInapplicableStringEncoding)
+                }
+
+                return result
             }
         }
 
