@@ -1,6 +1,5 @@
 import AppKit
 import AppIntents
-import GhosttyKit
 import SwiftUI
 
 struct TerminalEntity: AppEntity {
@@ -47,7 +46,7 @@ struct TerminalEntity: AppEntity {
     /// Returns the view associated with this entity. This may no longer exist.
     @MainActor
     var surfaceView: Ghostty.SurfaceView? {
-        Self.defaultQuery.all.first { $0.id == self.id }
+        Ghostty.TerminalHierarchy.snapshot().terminal(id: id)?.surfaceView
     }
 
     @MainActor
@@ -57,50 +56,62 @@ struct TerminalEntity: AppEntity {
 
     static var defaultQuery = TerminalQuery()
 
+    private init(
+        id: UUID,
+        surfaceID: String,
+        title: String,
+        workingDirectory: String?,
+        tty: String?,
+        tabID: String?,
+        windowID: String?,
+        kind: Kind,
+        screenshot: NSImage?
+    ) {
+        self.id = id
+        self.surfaceID = surfaceID
+        self.title = title
+        self.workingDirectory = workingDirectory
+        self.tty = tty
+        self.tabID = tabID
+        self.windowID = windowID
+        self.kind = kind
+        self.screenshot = screenshot
+    }
+
+    @MainActor
+    init(_ terminal: Ghostty.TerminalHierarchy.Snapshot.Terminal) {
+        self.init(
+            id: terminal.uuid,
+            surfaceID: terminal.id,
+            title: terminal.title,
+            workingDirectory: terminal.workingDirectory,
+            tty: terminal.tty,
+            tabID: terminal.tabID,
+            windowID: terminal.windowID,
+            kind: terminal.isQuickTerminal ? .quick : .normal,
+            screenshot: ImageRenderer(content: terminal.surfaceView.screenshot()).nsImage
+        )
+    }
+
     @MainActor
     init(_ view: Ghostty.SurfaceView) {
-        let controller = NSApp.windows
-            .compactMap { $0.windowController as? BaseTerminalController }
-            .first { controller in
-                controller.surfaceTree.contains(where: { $0 === view })
-            }
-
-        self.id = view.id
-        self.surfaceID = view.id.uuidString
-        self.title = view.title
-        self.workingDirectory = view.pwd
-        if let surface = view.surface {
-            let bufSize = 256
-            var buf = [CChar](repeating: 0, count: bufSize)
-            let len = ghostty_surface_pty_name(surface, &buf, UInt(bufSize))
-            if len > 0 {
-                buf[min(Int(len), bufSize - 1)] = 0
-                self.tty = String(cString: buf)
-            } else {
-                self.tty = nil
-            }
-        } else {
-            self.tty = nil
+        if let terminal = Ghostty.TerminalHierarchy.snapshot().terminal(id: view.id) {
+            self = .init(terminal)
+            return
         }
 
-        if let controller {
-            self.tabID = ScriptTab.stableID(controller: controller)
-            self.windowID = ScriptWindow.stableID(primaryController: controller)
-        } else {
-            self.tabID = nil
-            self.windowID = nil
-        }
-
-        if let nsImage = ImageRenderer(content: view.screenshot()).nsImage {
-            self.screenshot = nsImage
-        }
-
-        // Determine the kind based on the window controller type
-        if controller is QuickTerminalController {
-            self.kind = .quick
-        } else {
-            self.kind = .normal
-        }
+        let controller = Ghostty.TerminalHierarchy.controller(for: view)
+        self.init(
+            id: view.id,
+            surfaceID: Ghostty.TerminalHierarchy.surfaceID(for: view),
+            title: view.title,
+            workingDirectory: view.pwd,
+            tty: Ghostty.TerminalHierarchy.tty(for: view),
+            tabID: controller.map(Ghostty.TerminalHierarchy.tabID(for:)),
+            windowID: controller.map(Ghostty.TerminalHierarchy.windowID(for:)),
+            kind: controller is QuickTerminalController ? .quick : .normal,
+            screenshot: ImageRenderer(content: view.screenshot()).nsImage
+        )
     }
 }
 
@@ -122,7 +133,7 @@ struct TerminalQuery: EntityStringQuery, EnumerableEntityQuery {
     @MainActor
     func entities(for identifiers: [TerminalEntity.ID]) async throws -> [TerminalEntity] {
         return all.filter {
-            identifiers.contains($0.id)
+            identifiers.contains($0.uuid)
         }.map {
             TerminalEntity($0)
         }
@@ -148,16 +159,7 @@ struct TerminalQuery: EntityStringQuery, EnumerableEntityQuery {
     }
 
     @MainActor
-    var all: [Ghostty.SurfaceView] {
-        // Find all of our terminal windows. This will include the quick terminal
-        // but only if it was previously opened.
-        let controllers = NSApp.windows.compactMap {
-            $0.windowController as? BaseTerminalController
-        }
-
-        // Get all our surfaces
-        return controllers.flatMap {
-            $0.surfaceTree.root?.leaves() ?? []
-        }
+    var all: [Ghostty.TerminalHierarchy.Snapshot.Terminal] {
+        Ghostty.TerminalHierarchy.snapshot().terminals
     }
 }

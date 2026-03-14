@@ -10,6 +10,9 @@ final class ScriptTab: NSObject {
     /// Stable identifier used by AppleScript `tab id "..."` references.
     private let stableID: String
 
+    /// Stable identifier of the scripting window containing this tab.
+    private let windowID: String
+
     /// Weak back-reference to the scripting window that owns this tab wrapper.
     ///
     /// We only need this for dynamic properties (`index`, `selected`) and for
@@ -25,10 +28,23 @@ final class ScriptTab: NSObject {
     ///
     /// The ID is computed once so object specifiers built from this instance keep
     /// a consistent tab identity.
-    init(window: ScriptWindow, controller: BaseTerminalController) {
-        self.stableID = Self.stableID(controller: controller)
+    init(window: ScriptWindow, stableID: String, controller: BaseTerminalController? = nil) {
+        self.stableID = stableID
+        self.windowID = window.stableID
         self.window = window
         self.controller = controller
+    }
+
+    convenience init(window: ScriptWindow, controller: BaseTerminalController) {
+        self.init(
+            window: window,
+            stableID: Ghostty.TerminalHierarchy.tabID(for: controller),
+            controller: controller
+        )
+    }
+
+    private var hierarchyTab: Ghostty.TerminalHierarchy.Snapshot.Tab? {
+        Ghostty.TerminalHierarchy.snapshot().tab(id: stableID)
     }
 
     /// Exposed as the AppleScript `id` property.
@@ -44,7 +60,7 @@ final class ScriptTab: NSObject {
     @objc(title)
     var title: String {
         guard NSApp.isAppleScriptEnabled else { return "" }
-        return controller?.window?.title ?? ""
+        return hierarchyTab?.title ?? controller?.window?.title ?? ""
     }
 
     /// Exposed as the AppleScript `index` property.
@@ -53,6 +69,10 @@ final class ScriptTab: NSObject {
     @objc(index)
     var index: Int {
         guard NSApp.isAppleScriptEnabled else { return 0 }
+        if let hierarchyTab {
+            return hierarchyTab.index
+        }
+
         guard let controller else { return 0 }
         return window?.tabIndex(for: controller) ?? 0
     }
@@ -63,6 +83,10 @@ final class ScriptTab: NSObject {
     @objc(selected)
     var selected: Bool {
         guard NSApp.isAppleScriptEnabled else { return false }
+        if let hierarchyTab {
+            return hierarchyTab.isSelected
+        }
+
         guard let controller else { return false }
         return window?.tabIsSelected(controller) ?? false
     }
@@ -73,6 +97,10 @@ final class ScriptTab: NSObject {
     @objc(focusedTerminal)
     var focusedTerminal: ScriptTerminal? {
         guard NSApp.isAppleScriptEnabled else { return nil }
+        if let focusedTerminalID = hierarchyTab?.focusedTerminalID {
+            return ScriptTerminal(stableID: focusedTerminalID)
+        }
+
         guard let controller else { return nil }
         guard let surface = controller.focusedSurface,
               controller.surfaceTree.contains(surface)
@@ -84,13 +112,13 @@ final class ScriptTab: NSObject {
     /// Best-effort native window containing this tab.
     var parentWindow: NSWindow? {
         guard NSApp.isAppleScriptEnabled else { return nil }
-        return controller?.window
+        return hierarchyTab?.window ?? controller?.window
     }
 
     /// Live controller backing this tab wrapper.
     var parentController: BaseTerminalController? {
         guard NSApp.isAppleScriptEnabled else { return nil }
-        return controller
+        return hierarchyTab?.controller ?? controller
     }
 
     /// Exposed as the AppleScript `terminals` element on a tab.
@@ -99,6 +127,10 @@ final class ScriptTab: NSObject {
     @objc(terminals)
     var terminals: [ScriptTerminal] {
         guard NSApp.isAppleScriptEnabled else { return [] }
+        if let hierarchyTab {
+            return hierarchyTab.terminalIDs.map(ScriptTerminal.init)
+        }
+
         guard let controller else { return [] }
         return (controller.surfaceTree.root?.leaves() ?? [])
             .map(ScriptTerminal.init)
@@ -108,6 +140,10 @@ final class ScriptTab: NSObject {
     @objc(valueInTerminalsWithUniqueID:)
     func valueInTerminals(uniqueID: String) -> ScriptTerminal? {
         guard NSApp.isAppleScriptEnabled else { return nil }
+        if hierarchyTab?.terminalIDs.contains(uniqueID) == true {
+            return ScriptTerminal(stableID: uniqueID)
+        }
+
         guard let controller else { return nil }
         return (controller.surfaceTree.root?.leaves() ?? [])
             .first(where: { $0.id.uuidString == uniqueID })
@@ -158,7 +194,7 @@ final class ScriptTab: NSObject {
     /// Provides Cocoa scripting with a canonical "path" back to this object.
     override var objectSpecifier: NSScriptObjectSpecifier? {
         guard NSApp.isAppleScriptEnabled else { return nil }
-        guard let window else { return nil }
+        let window = window ?? ScriptWindow(stableID: windowID)
         guard let windowClassDescription = window.classDescription as? NSScriptClassDescription else {
             return nil
         }
@@ -181,6 +217,6 @@ extension ScriptTab {
     /// Tab identity belongs to `ScriptTab`, so both tab creation and tab ID
     /// lookups in `ScriptWindow` call this helper.
     static func stableID(controller: BaseTerminalController) -> String {
-        "tab-\(ObjectIdentifier(controller).hexString)"
+        Ghostty.TerminalHierarchy.tabID(for: controller)
     }
 }
