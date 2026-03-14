@@ -197,6 +197,23 @@ extension NSApplication {
         terminate(nil)
     }
 
+    /// Handler for the `dump hierarchy` AppleScript command.
+    ///
+    /// Returns a JSON snapshot of the current window, tab, and terminal
+    /// hierarchy for external automation tools.
+    @objc(handleDumpHierarchyScriptCommand:)
+    func handleDumpHierarchyScriptCommand(_ command: NSScriptCommand) -> String? {
+        guard validateScript(command: command) else { return nil }
+
+        do {
+            return try Ghostty.TerminalHierarchy.snapshot().jsonString()
+        } catch {
+            command.scriptErrorNumber = errAEEventFailed
+            command.scriptErrorString = "Failed to encode terminal hierarchy: \(error.localizedDescription)"
+            return nil
+        }
+    }
+
     /// Handler for the `new tab` AppleScript command.
     ///
     /// Required selector name from the command in `sdef`:
