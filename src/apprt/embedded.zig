@@ -419,6 +419,10 @@ pub const Surface = struct {
     /// that getTitle works without the implementer needing to save it.
     title: ?[:0]const u8 = null,
 
+    /// When true, this surface operates in replay mode: no PTY is spawned,
+    /// and terminal data must be fed externally via ghostty_surface_feed_output().
+    replay_mode: bool = false,
+
     /// Surface initialization options.
     pub const Options = extern struct {
         /// The platform that this surface is being initialized for and
@@ -460,6 +464,10 @@ pub const Surface = struct {
 
         /// Context for the new surface
         context: apprt.surface.NewSurfaceContext = .window,
+
+        /// When true, create a replay surface that does not spawn a PTY.
+        /// Terminal data must be fed via ghostty_surface_feed_output().
+        replay_mode: bool = false,
     };
 
     pub fn init(self: *Surface, app: *App, opts: Options) !void {
@@ -474,6 +482,7 @@ pub const Surface = struct {
             },
             .size = .{ .width = 800, .height = 600 },
             .cursor_pos = .{ .x = -1, .y = -1 },
+            .replay_mode = opts.replay_mode,
         };
 
         // Add ourselves to the list of surfaces on the app.
@@ -2074,12 +2083,86 @@ pub const CAPI = struct {
     ) usize {
         const pty = switch (surface.core_surface.io.backend) {
             .exec => |*exec| exec.subprocess.pty,
+            .replay => return 0,
         } orelse return 0;
         const name_ptr = pty.slaveName() orelse return 0;
         const name = std.mem.span(name_ptr);
         const copy_len = @min(name.len, buf_len);
         @memcpy(buf[0..copy_len], name[0..copy_len]);
         return copy_len;
+    }
+
+    /// Set a callback that receives raw PTY output bytes. The callback is
+    /// invoked from the IO reader thread — the caller must handle thread
+    /// safety. Pass null to remove the callback.
+    ///
+    /// To avoid a race between setting callback and userdata, we clear the
+    /// callback first, set userdata, then set the callback. The IO thread
+    /// will either see null (no-op) or the new callback with correct userdata.
+    export fn ghostty_surface_set_output_callback(
+        surface: *Surface,
+        callback: ?*const fn (?*anyopaque, [*]const u8, usize) void,
+        userdata: ?*anyopaque,
+    ) void {
+        // Clear callback first so the IO thread won't invoke it with stale userdata
+        @atomicStore(
+            @TypeOf(surface.core_surface.io.output_callback),
+            &surface.core_surface.io.output_callback,
+            null,
+            .release,
+        );
+        // Set userdata (safe — callback is null, IO thread won't read userdata)
+        surface.core_surface.io.output_callback_userdata = userdata;
+        // Set callback last — IO thread will see new callback with correct userdata
+        @atomicStore(
+            @TypeOf(surface.core_surface.io.output_callback),
+            &surface.core_surface.io.output_callback,
+            callback,
+            .release,
+        );
+    }
+
+    /// Feed raw terminal output bytes into a replay surface. The data is
+    /// routed through the IO thread's mailbox and processed by the VT
+    /// parser on the IO thread — the same thread that would process PTY
+    /// output in a normal surface. This is safe to call from any thread.
+    export fn ghostty_surface_feed_output(
+        surface: *Surface,
+        data: [*]const u8,
+        len: usize,
+    ) void {
+        if (!surface.replay_mode) {
+            log.warn("ghostty_surface_feed_output called on non-replay surface", .{});
+            return;
+        }
+        if (len == 0) return;
+
+        // Copy the data — caller's buffer is not guaranteed to outlive
+        // the message delivery.
+        const alloc = surface.core_surface.alloc;
+        const data_copy = alloc.dupe(u8, data[0..len]) catch |err| {
+            log.err("replay_data alloc failed err={}", .{err});
+            return;
+        };
+
+        surface.core_surface.io.queueMessage(.{
+            .replay_data = .{
+                .alloc = alloc,
+                .data = data_copy,
+            },
+        }, .unlocked);
+    }
+
+    /// Get the terminal grid dimensions (rows and columns).
+    export fn ghostty_surface_get_grid_size(
+        surface: *Surface,
+        rows: *u16,
+        cols: *u16,
+    ) void {
+        surface.core_surface.renderer_state.mutex.lock();
+        defer surface.core_surface.renderer_state.mutex.unlock();
+        rows.* = @intCast(surface.core_surface.io.terminal.rows);
+        cols.* = @intCast(surface.core_surface.io.terminal.cols);
     }
 
     export fn ghostty_surface_inspector(ptr: *Surface) ?*Inspector {
