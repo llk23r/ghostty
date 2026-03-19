@@ -82,6 +82,16 @@ pub const Message = union(enum) {
     /// Write where the data is allocated and must be freed.
     write_alloc: WriteReq.Alloc,
 
+    /// Inject terminal output data for replay surfaces. The data is
+    /// processed through the VT parser as if it came from a PTY read.
+    /// The allocated data is freed after processing. This message is
+    /// used by the replay backend so that external data is processed
+    /// on the IO thread rather than the main thread.
+    replay_data: struct {
+        alloc: Allocator,
+        data: []const u8,
+    },
+
     /// Return a write request for the given data. This will use
     /// write_small if it fits or write_alloc otherwise. This should NOT
     /// be used for stable pointers which can be manually set to write_stable.
