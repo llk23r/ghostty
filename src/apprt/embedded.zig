@@ -2095,31 +2095,17 @@ pub const CAPI = struct {
     /// Set a callback that receives raw PTY output bytes. The callback is
     /// invoked from the IO reader thread — the caller must handle thread
     /// safety. Pass null to remove the callback.
-    ///
-    /// To avoid a race between setting callback and userdata, we clear the
-    /// callback first, set userdata, then set the callback. The IO thread
-    /// will either see null (no-op) or the new callback with correct userdata.
     export fn ghostty_surface_set_output_callback(
         surface: *Surface,
-        callback: ?*const fn (?*anyopaque, [*]const u8, usize) void,
+        callback: ?*const fn (?*anyopaque, [*]const u8, usize) callconv(.c) void,
         userdata: ?*anyopaque,
     ) void {
-        // Clear callback first so the IO thread won't invoke it with stale userdata
-        @atomicStore(
-            @TypeOf(surface.core_surface.io.output_callback),
-            &surface.core_surface.io.output_callback,
-            null,
-            .release,
-        );
-        // Set userdata (safe — callback is null, IO thread won't read userdata)
+        // Set userdata first, then callback. The read thread checks
+        // callback != null before reading userdata, so there's no
+        // window where it sees old userdata with new callback.
+        surface.core_surface.io.output_callback = null;
         surface.core_surface.io.output_callback_userdata = userdata;
-        // Set callback last — IO thread will see new callback with correct userdata
-        @atomicStore(
-            @TypeOf(surface.core_surface.io.output_callback),
-            &surface.core_surface.io.output_callback,
-            callback,
-            .release,
-        );
+        surface.core_surface.io.output_callback = callback;
     }
 
     /// Feed raw terminal output bytes into a replay surface. The data is

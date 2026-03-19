@@ -75,7 +75,7 @@ thread_enter_state: ?*ThreadEnterState = null,
 /// thread (exec backend) or the IO thread (replay backend via mailbox).
 /// The callback runs OUTSIDE the renderer mutex. The caller is
 /// responsible for thread safety of its own state.
-output_callback: ?*const fn (?*anyopaque, [*]const u8, usize) void = null,
+output_callback: ?*const fn (?*anyopaque, [*]const u8, usize) callconv(.c) void = null,
 output_callback_userdata: ?*anyopaque = null,
 
 /// The state we need to keep around only until we enter the IO
@@ -665,15 +665,10 @@ pub fn focusGained(self: *Termio, td: *ThreadData, focused: bool) !void {
 /// call with pty data but it is also called by the read thread when using
 /// an exec subprocess.
 pub fn processOutput(self: *Termio, buf: []const u8) void {
-    // Invoke the output tap callback BEFORE acquiring the renderer mutex.
-    // This keeps allocations (data copy in the callback) outside the lock,
-    // avoiding latency on the rendering path during burst terminal output.
-    if (@atomicLoad(
-        @TypeOf(self.output_callback),
-        &self.output_callback,
-        .acquire,
-    )) |cb| {
-        cb(self.output_callback_userdata, buf.ptr, buf.len);
+    if (self.output_callback) |cb| {
+        if (buf.len > 0) {
+            cb(self.output_callback_userdata, buf.ptr, buf.len);
+        }
     }
 
     // We are modifying terminal state from here on out and we need
