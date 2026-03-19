@@ -450,6 +450,7 @@ typedef struct {
   const char* initial_input;
   bool wait_after_command;
   ghostty_surface_context_e context;
+  bool replay_mode;
 } ghostty_surface_config_s;
 
 typedef struct {
@@ -1140,6 +1141,32 @@ bool ghostty_surface_quicklook_word(ghostty_surface_t, ghostty_text_s*);
 
 bool ghostty_surface_read_last_turns(ghostty_surface_t, uint32_t, ghostty_text_s*);
 bool ghostty_surface_read_first_turns(ghostty_surface_t, uint32_t, ghostty_text_s*);
+uintptr_t ghostty_surface_pty_name(ghostty_surface_t, char*, uintptr_t);
+
+// Output tap callback type. Called with raw PTY output bytes from the IO
+// reader thread. The caller is responsible for thread safety.
+typedef void (*ghostty_surface_output_cb)(void* userdata,
+                                          const uint8_t* data,
+                                          size_t len);
+
+// Set a callback that receives raw PTY output bytes before they are
+// parsed. Pass NULL to remove the callback.
+void ghostty_surface_set_output_callback(ghostty_surface_t,
+                                         ghostty_surface_output_cb,
+                                         void* userdata);
+
+// Feed raw terminal output bytes into a replay surface. The bytes are
+// processed through the VT parser and rendered as if from a local PTY.
+// Only valid on surfaces created with replay_mode = true.
+void ghostty_surface_feed_output(ghostty_surface_t,
+                                 const uint8_t* data,
+                                 uintptr_t len);
+
+// Get the terminal grid dimensions (rows, columns).
+void ghostty_surface_get_grid_size(ghostty_surface_t,
+                                   uint16_t* rows,
+                                   uint16_t* cols);
+
 ghostty_inspector_t ghostty_surface_inspector(ghostty_surface_t);
 void ghostty_inspector_free(ghostty_surface_t);
 void ghostty_inspector_set_focus(ghostty_inspector_t, bool);

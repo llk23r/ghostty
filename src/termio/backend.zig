@@ -11,28 +11,34 @@ const ProcessInfo = @import("../pty.zig").ProcessInfo;
 const WRITE_REQ_PREALLOC = std.math.pow(usize, 2, 5);
 
 /// The kinds of backends.
-pub const Kind = enum { exec };
+pub const Kind = enum { exec, replay };
 
 /// Configuration for the various backend types.
 pub const Config = union(Kind) {
     /// Exec uses posix exec to run a command with a pty.
     exec: termio.Exec.Config,
+
+    /// Replay receives terminal data externally (no PTY, no subprocess).
+    replay: termio.Replay.Config,
 };
 
 /// Backend implementations. A backend is responsible for owning the pty
 /// behavior and providing read/write capabilities.
 pub const Backend = union(Kind) {
     exec: termio.Exec,
+    replay: termio.Replay,
 
     pub fn deinit(self: *Backend) void {
         switch (self.*) {
             .exec => |*exec| exec.deinit(),
+            .replay => |*replay| replay.deinit(),
         }
     }
 
     pub fn initTerminal(self: *Backend, t: *terminal.Terminal) void {
         switch (self.*) {
             .exec => |*exec| exec.initTerminal(t),
+            .replay => |*replay| replay.initTerminal(t),
         }
     }
 
@@ -44,12 +50,14 @@ pub const Backend = union(Kind) {
     ) !void {
         switch (self.*) {
             .exec => |*exec| try exec.threadEnter(alloc, io, td),
+            .replay => |*replay| try replay.threadEnter(alloc, io, td),
         }
     }
 
     pub fn threadExit(self: *Backend, td: *termio.Termio.ThreadData) void {
         switch (self.*) {
             .exec => |*exec| exec.threadExit(td),
+            .replay => |*replay| replay.threadExit(td),
         }
     }
 
@@ -60,6 +68,7 @@ pub const Backend = union(Kind) {
     ) !void {
         switch (self.*) {
             .exec => |*exec| try exec.focusGained(td, focused),
+            .replay => |*replay| try replay.focusGained(td, focused),
         }
     }
 
@@ -70,6 +79,7 @@ pub const Backend = union(Kind) {
     ) !void {
         switch (self.*) {
             .exec => |*exec| try exec.resize(grid_size, screen_size),
+            .replay => |*replay| try replay.resize(grid_size, screen_size),
         }
     }
 
@@ -82,6 +92,7 @@ pub const Backend = union(Kind) {
     ) !void {
         switch (self.*) {
             .exec => |*exec| try exec.queueWrite(alloc, td, data, linefeed),
+            .replay => |*replay| try replay.queueWrite(alloc, td, data, linefeed),
         }
     }
 
@@ -94,6 +105,12 @@ pub const Backend = union(Kind) {
     ) !void {
         switch (self.*) {
             .exec => |*exec| try exec.childExitedAbnormally(
+                gpa,
+                t,
+                exit_code,
+                runtime_ms,
+            ),
+            .replay => |*replay| try replay.childExitedAbnormally(
                 gpa,
                 t,
                 exit_code,
@@ -115,10 +132,12 @@ pub const Backend = union(Kind) {
 /// Termio thread data. See termio.ThreadData for docs.
 pub const ThreadData = union(Kind) {
     exec: termio.Exec.ThreadData,
+    replay: termio.Replay.ThreadData,
 
     pub fn deinit(self: *ThreadData, alloc: Allocator) void {
         switch (self.*) {
             .exec => |*exec| exec.deinit(alloc),
+            .replay => |*replay| replay.deinit(alloc),
         }
     }
 
