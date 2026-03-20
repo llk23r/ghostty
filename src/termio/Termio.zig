@@ -666,7 +666,11 @@ pub fn focusGained(self: *Termio, td: *ThreadData, focused: bool) !void {
 /// call with pty data but it is also called by the read thread when using
 /// an exec subprocess.
 pub fn processOutput(self: *Termio, buf: []const u8) void {
-    if (self.output_callback) |cb| {
+    if (@atomicLoad(
+        @TypeOf(self.output_callback),
+        &self.output_callback,
+        .acquire,
+    )) |cb| {
         if (buf.len > 0) {
             cb(self.output_callback_userdata, buf.ptr, buf.len);
         }
