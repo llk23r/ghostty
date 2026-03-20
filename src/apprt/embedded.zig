@@ -2100,12 +2100,13 @@ pub const CAPI = struct {
         callback: ?*const fn (?*anyopaque, [*]const u8, usize) callconv(.c) void,
         userdata: ?*anyopaque,
     ) void {
-        // Set userdata first, then callback. The read thread checks
-        // callback != null before reading userdata, so there's no
-        // window where it sees old userdata with new callback.
-        surface.core_surface.io.output_callback = null;
+        const CbType = @TypeOf(surface.core_surface.io.output_callback);
+        // Clear callback first (IO thread sees null → skips invocation).
+        @atomicStore(CbType, &surface.core_surface.io.output_callback, null, .release);
+        // Set userdata while callback is null (IO thread won't read it).
         surface.core_surface.io.output_callback_userdata = userdata;
-        surface.core_surface.io.output_callback = callback;
+        // Set callback last — IO thread sees new callback with correct userdata.
+        @atomicStore(CbType, &surface.core_surface.io.output_callback, callback, .release);
     }
 
     /// Feed raw terminal output bytes into a replay surface. The data is
