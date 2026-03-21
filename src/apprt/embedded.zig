@@ -2081,14 +2081,20 @@ pub const CAPI = struct {
         buf: [*]u8,
         buf_len: usize,
     ) usize {
-        const pty = switch (surface.core_surface.io.backend) {
-            .exec => |*exec| exec.subprocess.pty,
+        switch (surface.core_surface.io.backend) {
+            .exec => |*exec| {
+                // getProcessInfo takes *PosixPty (caches tty_name internally),
+                // so we need a mutable pointer via |*pty| capture.
+                if (exec.subprocess.pty) |*pty| {
+                    const name = pty.getProcessInfo(.tty_name) orelse return 0;
+                    const copy_len = @min(name.len, buf_len);
+                    @memcpy(buf[0..copy_len], name[0..copy_len]);
+                    return copy_len;
+                }
+                return 0;
+            },
             .replay => return 0,
-        } orelse return 0;
-        const name = pty.getProcessInfo(.tty_name) orelse return 0;
-        const copy_len = @min(name.len, buf_len);
-        @memcpy(buf[0..copy_len], name[0..copy_len]);
-        return copy_len;
+        }
     }
 
     /// Set a callback that receives raw PTY output bytes. The callback is
