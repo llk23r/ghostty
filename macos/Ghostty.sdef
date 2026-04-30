@@ -99,7 +99,8 @@
       <property name="window" code="GTrw" type="window" access="r" description="Containing window for this terminal.">
         <cocoa key="scriptWindow"/>
       </property>
-      <property name="tty" code="Gtty" type="text" access="r" description="Slave pseudo-terminal device path (e.g. /dev/ttys004)."/>
+      <property name="pid" code="Gpid" type="integer" access="r" description="PID of the foreground process in this terminal."/>
+      <property name="tty" code="Gtty" type="text" access="r" description="TTY device path for this terminal (e.g. /dev/ttys016)."/>
       <responds-to command="split">
         <cocoa method="handleSplitCommand:"/>
       </responds-to>

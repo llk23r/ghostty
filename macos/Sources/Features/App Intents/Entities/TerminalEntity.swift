@@ -14,6 +14,9 @@ struct TerminalEntity: AppEntity {
     @Property(title: "Working Directory")
     var workingDirectory: String?
 
+    @Property(title: "PID")
+    var pid: Int?
+
     @Property(title: "TTY")
     var tty: String?
 
@@ -61,6 +64,7 @@ struct TerminalEntity: AppEntity {
         surfaceID: String,
         title: String,
         workingDirectory: String?,
+        pid: Int?,
         tty: String?,
         tabID: String?,
         windowID: String?,
@@ -71,6 +75,7 @@ struct TerminalEntity: AppEntity {
         self.surfaceID = surfaceID
         self.title = title
         self.workingDirectory = workingDirectory
+        self.pid = pid
         self.tty = tty
         self.tabID = tabID
         self.windowID = windowID
@@ -85,6 +90,7 @@ struct TerminalEntity: AppEntity {
             surfaceID: terminal.id,
             title: terminal.title,
             workingDirectory: terminal.workingDirectory,
+            pid: terminal.pid,
             tty: terminal.tty,
             tabID: terminal.tabID,
             windowID: terminal.windowID,
@@ -106,6 +112,7 @@ struct TerminalEntity: AppEntity {
             surfaceID: Ghostty.TerminalHierarchy.surfaceID(for: view),
             title: view.title,
             workingDirectory: view.pwd,
+            pid: view.surfaceModel?.foregroundPID,
             tty: Ghostty.TerminalHierarchy.tty(for: view),
             tabID: controller.map(Ghostty.TerminalHierarchy.tabID(for:)),
             windowID: controller.map(Ghostty.TerminalHierarchy.windowID(for:)),

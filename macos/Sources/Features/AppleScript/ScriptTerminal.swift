@@ -11,6 +11,8 @@ import AppKit
 /// - `property id` -> `@objc(id)` getter below.
 /// - `property title` -> `@objc(title)` getter below.
 /// - `property working directory` -> `@objc(workingDirectory)` getter below.
+/// - `property pid` -> `@objc(pid)` getter below.
+/// - `property tty` -> `@objc(tty)` getter below.
 ///
 /// We keep a weak fallback reference to the underlying `SurfaceView`, while
 /// resolving current state through the shared terminal hierarchy snapshot.
@@ -126,6 +128,13 @@ final class ScriptTerminal: NSObject {
     var tty: String {
         guard NSApp.isAppleScriptEnabled else { return "" }
         return hierarchyTerminal?.tty ?? surfaceView.flatMap(Ghostty.TerminalHierarchy.tty(for:)) ?? ""
+    }
+
+    /// Exposed as the AppleScript `pid` property.
+    @objc(pid)
+    var pid: Int {
+        guard NSApp.isAppleScriptEnabled else { return 0 }
+        return hierarchyTerminal?.pid ?? surfaceView?.surfaceModel?.foregroundPID ?? 0
     }
 
     /// Used by command handling (`perform action ... on <terminal>`).

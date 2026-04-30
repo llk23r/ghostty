@@ -31,6 +31,7 @@ extension Ghostty {
                     let windowID: String
                     let title: String
                     let workingDirectory: String?
+                    let pid: Int?
                     let tty: String?
                     let isFocused: Bool
                     let isQuickTerminal: Bool
@@ -70,6 +71,7 @@ extension Ghostty {
                             windowID: $0.windowID,
                             title: $0.title,
                             workingDirectory: $0.workingDirectory,
+                            pid: $0.pid,
                             tty: $0.tty,
                             isFocused: $0.isFocused,
                             isQuickTerminal: $0.isQuickTerminal
@@ -108,6 +110,7 @@ extension Ghostty {
                 let windowID: String
                 let title: String
                 let workingDirectory: String?
+                let pid: Int?
                 let tty: String?
                 let isFocused: Bool
                 let isQuickTerminal: Bool
@@ -217,6 +220,7 @@ extension Ghostty {
                             windowID: windowID,
                             title: surfaceView.title,
                             workingDirectory: surfaceView.pwd,
+                            pid: surfaceView.surfaceModel?.foregroundPID,
                             tty: tty(for: surfaceView),
                             isFocused: tabController.focusedSurface === surfaceView,
                             isQuickTerminal: tabController is QuickTerminalController,
