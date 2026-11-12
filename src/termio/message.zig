@@ -97,6 +97,16 @@ pub const Message = union(enum) {
     /// Write where the data is allocated and must be freed.
     write_alloc: WriteReq.Alloc,
 
+    /// Inject terminal output data for replay surfaces. The data is
+    /// processed through the VT parser as if it came from a PTY read.
+    /// The allocated data is freed after processing. This message is
+    /// used by the replay backend so that external data is processed
+    /// on the IO thread rather than the main thread.
+    replay_data: struct {
+        alloc: Allocator,
+        data: []const u8,
+    },
+
     /// The payload of the kitty_clipboard_grant_* messages. The
     /// password is allocated and must be freed.
     pub const KittyClipboardGrant = struct {
@@ -124,6 +134,7 @@ pub const Message = union(enum) {
                 v.alloc.destroy(v.ptr);
             },
             .write_alloc => |v| v.alloc.free(v.data),
+            .replay_data => |v| v.alloc.free(v.data),
             .kitty_clipboard_grant_read,
             .kitty_clipboard_grant_write,
             => |v| v.alloc.free(v.pw),

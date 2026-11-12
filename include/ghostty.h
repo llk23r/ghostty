@@ -534,6 +534,9 @@ typedef struct {
   const char* GHOSTTY_NULLABLE initial_input;
   bool wait_after_command;
   ghostty_surface_context_e context;
+  // Mission Canvas fork: create a surface with no PTY/subprocess whose
+  // output is supplied via ghostty_surface_feed_output.
+  bool replay_mode;
 } ghostty_surface_config_s;
 
 typedef struct {
@@ -1272,6 +1275,47 @@ GHOSTTY_API void ghostty_surface_set_display_id(ghostty_surface_t, uint32_t);
 GHOSTTY_API void* GHOSTTY_NULLABLE ghostty_surface_quicklook_font(ghostty_surface_t);
 GHOSTTY_API bool ghostty_surface_quicklook_word(ghostty_surface_t, ghostty_text_s*);
 #endif
+
+// --- Mission Canvas embedding extensions -----------------------------------
+// These APIs exist only in the multi-user-canvas fork. They let an embedder
+// (Mission Canvas) mirror one terminal's PTY byte stream into another surface
+// rendered by the same GPU renderer, and read shell-integration turns.
+
+// Read the last/first N command turns (prompt + input + output) from the
+// active screen. Requires shell integration semantic prompt markers.
+// Free the result with ghostty_surface_free_text.
+GHOSTTY_API bool ghostty_surface_read_last_turns(ghostty_surface_t, uint32_t, ghostty_text_s*);
+GHOSTTY_API bool ghostty_surface_read_first_turns(ghostty_surface_t, uint32_t, ghostty_text_s*);
+
+// Output tap callback type. Called with raw PTY output bytes from the IO
+// reader thread (or the IO thread for replay surfaces) before they are
+// parsed. The callback runs outside the renderer lock; the caller is
+// responsible for its own thread safety.
+typedef void (*ghostty_surface_output_cb)(void* GHOSTTY_NULLABLE userdata,
+                                          const uint8_t* data,
+                                          size_t len);
+
+// Set a callback that receives raw PTY output bytes before they are
+// parsed. Pass NULL to remove the callback.
+GHOSTTY_API void ghostty_surface_set_output_callback(
+    ghostty_surface_t,
+    ghostty_surface_output_cb GHOSTTY_NULLABLE,
+    void* GHOSTTY_NULLABLE userdata);
+
+// Feed raw terminal output bytes into a replay surface. The bytes are
+// copied, queued to the surface's IO thread, and processed through the VT
+// parser as if read from a local PTY. Only valid on surfaces created with
+// replay_mode = true. Safe to call from any thread.
+GHOSTTY_API void ghostty_surface_feed_output(ghostty_surface_t,
+                                             const uint8_t* data,
+                                             uintptr_t len);
+
+// Get the terminal grid dimensions (rows, columns). Size changes are
+// applied on the IO thread, so this may lag a just-issued set_size.
+GHOSTTY_API void ghostty_surface_get_grid_size(ghostty_surface_t,
+                                               uint16_t* rows,
+                                               uint16_t* cols);
+// --- end Mission Canvas embedding extensions -------------------------------
 
 GHOSTTY_API ghostty_inspector_t GHOSTTY_NULLABLE ghostty_surface_inspector(ghostty_surface_t);
 GHOSTTY_API void ghostty_inspector_free(ghostty_surface_t);

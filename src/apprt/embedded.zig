@@ -16,6 +16,7 @@ const input = @import("../input.zig");
 const internal_os = @import("../os/main.zig");
 const renderer = @import("../renderer.zig");
 const terminal = @import("../terminal/main.zig");
+const termio = @import("../termio.zig");
 const CoreApp = @import("../App.zig");
 const CoreInspector = @import("../inspector/main.zig").Inspector;
 const CoreSurface = @import("../Surface.zig");
@@ -458,6 +459,10 @@ pub const Surface = struct {
     /// that getTitle works without the implementer needing to save it.
     title: ?[:0]const u8 = null,
 
+    /// When true, this surface operates in replay mode: no PTY is spawned,
+    /// and terminal data must be fed externally via ghostty_surface_feed_output().
+    replay_mode: bool = false,
+
     /// Surface initialization options.
     pub const Options = extern struct {
         /// The platform that this surface is being initialized for and
@@ -499,6 +504,10 @@ pub const Surface = struct {
 
         /// Context for the new surface
         context: apprt.surface.NewSurfaceContext = .window,
+
+        /// When true, create a replay surface that does not spawn a PTY.
+        /// Terminal data must be fed via ghostty_surface_feed_output().
+        replay_mode: bool = false,
     };
 
     pub fn init(self: *Surface, app: *App, opts: Options) !void {
@@ -513,6 +522,7 @@ pub const Surface = struct {
             },
             .size = .{ .width = 800, .height = 600 },
             .cursor_pos = .{ .x = -1, .y = -1 },
+            .replay_mode = opts.replay_mode,
         };
 
         // Add ourselves to the list of surfaces on the app.
@@ -2345,6 +2355,135 @@ pub const CAPI = struct {
     ) void {
         ptr.denyClipboardRequest(state);
     }
+
+    // --- Mission Canvas embedding extensions -------------------------------
+    // See the matching section in include/ghostty.h.
+
+    /// Reads the last `n` command turns (prompt + input + output) from the
+    /// active screen. Requires shell integration for semantic prompt markers.
+    export fn ghostty_surface_read_last_turns(
+        surface: *Surface,
+        n: u32,
+        result: *Text,
+    ) bool {
+        const core_surface = &surface.core_surface;
+        core_surface.renderer_state.mutex.lockUncancelable(global.io());
+        defer core_surface.renderer_state.mutex.unlock(global.io());
+
+        const screen = core_surface.io.terminal.screens.active;
+        const br_pin = screen.pages.getBottomRight(.screen) orelse return false;
+
+        // Walk backwards to find the Nth prompt.
+        var it = br_pin.promptIterator(.left_up, null);
+        var prompt_pin: ?terminal.Pin = null;
+        var count: u32 = 0;
+        while (it.next()) |p| {
+            prompt_pin = p;
+            count += 1;
+            if (count >= n) break;
+        }
+
+        const start_pin = prompt_pin orelse return false;
+        const sel = terminal.Selection.init(start_pin, br_pin, false);
+        return readTextLocked(surface, sel, result);
+    }
+
+    /// Same as ghostty_surface_read_last_turns but reads from the top of
+    /// the scrollback: the first `n` turns, ending one row before the
+    /// following prompt (or at the bottom of the screen).
+    export fn ghostty_surface_read_first_turns(
+        surface: *Surface,
+        n: u32,
+        result: *Text,
+    ) bool {
+        const core_surface = &surface.core_surface;
+        core_surface.renderer_state.mutex.lockUncancelable(global.io());
+        defer core_surface.renderer_state.mutex.unlock(global.io());
+
+        const screen = core_surface.io.terminal.screens.active;
+        const tl_pin = screen.pages.getTopLeft(.screen);
+
+        var it = tl_pin.promptIterator(.right_down, null);
+        var start_pin: ?terminal.Pin = null;
+        var count: u32 = 0;
+        while (it.next()) |p| {
+            if (count == 0) start_pin = p;
+            count += 1;
+            if (count >= n) break;
+        }
+        const first_prompt = start_pin orelse return false;
+
+        const end_pin = if (it.next()) |next_prompt|
+            next_prompt.up(1) orelse next_prompt
+        else
+            screen.pages.getBottomRight(.screen) orelse return false;
+
+        const sel = terminal.Selection.init(first_prompt, end_pin, false);
+        return readTextLocked(surface, sel, result);
+    }
+
+    /// Set a callback that receives raw PTY output bytes before parsing.
+    /// Invoked from the IO reader thread; the caller must handle thread
+    /// safety. Pass null to remove the callback.
+    ///
+    /// Ordering avoids a callback/userdata race: clear the callback, set
+    /// userdata, then publish the callback. The IO thread observes either
+    /// null (skips) or the new callback paired with its userdata.
+    export fn ghostty_surface_set_output_callback(
+        surface: *Surface,
+        callback: termio.Termio.OutputCallback,
+        userdata: ?*anyopaque,
+    ) void {
+        const io = &surface.core_surface.io;
+        @atomicStore(termio.Termio.OutputCallback, &io.output_callback, null, .release);
+        io.output_callback_userdata = userdata;
+        @atomicStore(termio.Termio.OutputCallback, &io.output_callback, callback, .release);
+    }
+
+    /// Feed raw terminal output bytes into a replay surface. The data is
+    /// copied and routed through the IO mailbox so the VT parser runs on
+    /// the IO thread, exactly like PTY output on a normal surface. The IO
+    /// mailbox is single-producer: call this from the same thread as the
+    /// rest of the surface API (the main thread).
+    export fn ghostty_surface_feed_output(
+        surface: *Surface,
+        data: [*]const u8,
+        len: usize,
+    ) void {
+        if (!surface.replay_mode) {
+            log.warn("ghostty_surface_feed_output called on non-replay surface", .{});
+            return;
+        }
+        if (len == 0) return;
+
+        const alloc = surface.core_surface.alloc;
+        const data_copy = alloc.dupe(u8, data[0..len]) catch |err| {
+            log.err("replay_data alloc failed err={}", .{err});
+            return;
+        };
+
+        surface.core_surface.io.queueMessage(.{
+            .replay_data = .{
+                .alloc = alloc,
+                .data = data_copy,
+            },
+        }, .unlocked);
+    }
+
+    /// Get the terminal grid dimensions (rows and columns).
+    export fn ghostty_surface_get_grid_size(
+        surface: *Surface,
+        rows: *u16,
+        cols: *u16,
+    ) void {
+        const core_surface = &surface.core_surface;
+        core_surface.renderer_state.mutex.lockUncancelable(global.io());
+        defer core_surface.renderer_state.mutex.unlock(global.io());
+        rows.* = @intCast(core_surface.io.terminal.rows);
+        cols.* = @intCast(core_surface.io.terminal.cols);
+    }
+
+    // --- end Mission Canvas embedding extensions ---------------------------
 
     export fn ghostty_surface_inspector(ptr: *Surface) ?*Inspector {
         return ptr.initInspector() catch |err| {

@@ -648,8 +648,17 @@ pub fn init(
         .config_conditional_state = app.config_conditional_state,
     };
 
+    // Mission Canvas fork: a replay surface has no PTY and no subprocess.
+    // Its terminal output is supplied by the embedder through
+    // ghostty_surface_feed_output. Only the embedded apprt has this field.
+    const is_replay = if (@hasField(apprt.runtime.Surface, "replay_mode"))
+        rt_surface.replay_mode
+    else
+        false;
+
     // The command we're going to execute
     const command: ?configpkg.Command = command: {
+        if (is_replay) break :command null;
         if (app.first) {
             if (config.@"initial-command") |command| {
                 break :command command;
@@ -662,43 +671,12 @@ pub fn init(
     // This separate block ({}) is important because our errdefers must
     // be scoped here to be valid.
     {
-        // Exec.init takes ownership of the env even if it fails, so the
-        // errdefer for it must not reach past the call.
-        const env = termio_env: {
-            var env = rt_surface.defaultTermioEnv() catch |err| env: {
-                // If an error occurs, we don't want to block surface startup.
-                log.warn("error getting env map for surface err={}", .{err});
-                break :env global.environMap() catch std.process.Environ.Map.init(alloc);
-            };
-            errdefer env.deinit();
-
-            // don't leak GHOSTTY_LOG to any subprocesses
-            _ = env.orderedRemove("GHOSTTY_LOG");
-
-            var buf: [18]u8 = undefined;
-            try env.put(
-                "GHOSTTY_SURFACE_ID",
-                std.mem.print(&buf, "0x{x:0>16}", .{self.id}) catch unreachable,
-            );
-
-            break :termio_env env;
-        };
-
         // Initialize our IO backend
-        var io_exec = try termio.Exec.init(alloc, .{
-            .command = command,
-            .env = env,
-            .env_override = config.env,
-            .shell_integration = config.@"shell-integration",
-            .shell_integration_features = config.@"shell-integration-features",
-            .cursor_blink = config.@"cursor-style-blink",
-            .working_directory = if (config.@"working-directory") |wd| wd.value() else null,
-            .resources_dir = global.resourcesDir().host(),
-            .term = config.term,
-            .rt_pre_exec_info = .init(config),
-            .rt_post_fork_info = .init(config),
-        });
-        errdefer io_exec.deinit();
+        var backend: termio.Backend = if (is_replay)
+            .{ .replay = .init() }
+        else
+            .{ .exec = try initExecBackend(self, alloc, rt_surface, config, command) };
+        errdefer backend.deinit();
 
         // Initialize our IO mailbox
         var io_mailbox = try termio.Mailbox.initSPSC(alloc);
@@ -712,7 +690,7 @@ pub fn init(
             .size = size,
             .full_config = config,
             .config = io_config,
-            .backend = .{ .exec = io_exec },
+            .backend = backend,
             .mailbox = io_mailbox,
             .renderer_state = &self.renderer_state,
             .renderer_wakeup = render_thread.wakeup,
@@ -824,6 +802,51 @@ pub fn init(
 
     // We are no longer the first surface
     app.first = false;
+}
+
+/// Build the exec (PTY + subprocess) termio backend for a normal surface.
+/// Split out of init so replay surfaces (Mission Canvas fork) can skip it.
+/// Exec.init takes ownership of the env even if it fails.
+fn initExecBackend(
+    self: *Surface,
+    alloc: Allocator,
+    rt_surface: *apprt.runtime.Surface,
+    config: *const configpkg.Config,
+    command: ?configpkg.Command,
+) !termio.Exec {
+    const env = termio_env: {
+        var env = rt_surface.defaultTermioEnv() catch |err| env: {
+            // If an error occurs, we don't want to block surface startup.
+            log.warn("error getting env map for surface err={}", .{err});
+            break :env global.environMap() catch std.process.Environ.Map.init(alloc);
+        };
+        errdefer env.deinit();
+
+        // don't leak GHOSTTY_LOG to any subprocesses
+        _ = env.orderedRemove("GHOSTTY_LOG");
+
+        var buf: [18]u8 = undefined;
+        try env.put(
+            "GHOSTTY_SURFACE_ID",
+            std.mem.print(&buf, "0x{x:0>16}", .{self.id}) catch unreachable,
+        );
+
+        break :termio_env env;
+    };
+
+    return try termio.Exec.init(alloc, .{
+        .command = command,
+        .env = env,
+        .env_override = config.env,
+        .shell_integration = config.@"shell-integration",
+        .shell_integration_features = config.@"shell-integration-features",
+        .cursor_blink = config.@"cursor-style-blink",
+        .working_directory = if (config.@"working-directory") |wd| wd.value() else null,
+        .resources_dir = global.resourcesDir().host(),
+        .term = config.term,
+        .rt_pre_exec_info = .init(config),
+        .rt_post_fork_info = .init(config),
+    });
 }
 
 pub fn deinit(self: *Surface) void {
@@ -1386,6 +1409,7 @@ fn childExitedAbnormally(
     // Build up our command for the error message
     const command = try std.mem.join(alloc, " ", switch (self.io.backend) {
         .exec => |*exec| exec.subprocess.args,
+        .replay => &.{"(replay)"},
     });
     const runtime_str = try alloc.print("{d} ms", .{info.runtime_ms});
 

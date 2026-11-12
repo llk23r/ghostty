@@ -73,6 +73,17 @@ last_cursor_reset: ?std.Io.Timestamp = null,
 /// to keep track of any state or if its already been freed.
 thread_enter_state: ?*ThreadEnterState = null,
 
+/// Mission Canvas fork: optional tap invoked with raw PTY output bytes
+/// before they are fed to the terminal stream parser. Called from the read
+/// thread (exec backend) or the IO thread (replay backend via mailbox),
+/// OUTSIDE the renderer mutex. The callee owns its own thread safety.
+/// Read and written atomically; see ghostty_surface_set_output_callback.
+output_callback: OutputCallback = null,
+output_callback_userdata: ?*anyopaque = null,
+
+/// C ABI signature of the output tap (ghostty_surface_output_cb).
+pub const OutputCallback = ?*const fn (?*anyopaque, [*]const u8, usize) callconv(.c) void;
+
 /// The state we need to keep around only until we enter the IO
 /// thread. Then we can throw it all away.
 const ThreadEnterState = struct {
@@ -703,6 +714,13 @@ pub fn focusGained(self: *Termio, td: *ThreadData, focused: bool) !void {
 /// call with pty data but it is also called by the read thread when using
 /// an exec subprocess.
 pub fn processOutput(self: *Termio, buf: []const u8) void {
+    // Invoke the output tap callback BEFORE acquiring the renderer mutex.
+    // This keeps allocations (data copy in the callback) outside the lock,
+    // avoiding latency on the rendering path during burst terminal output.
+    if (@atomicLoad(OutputCallback, &self.output_callback, .acquire)) |cb| {
+        if (buf.len > 0) cb(self.output_callback_userdata, buf.ptr, buf.len);
+    }
+
     // We are modifying terminal state from here on out and we need
     // the lock to grab our read data.
     self.renderer_state.mutex.lockUncancelable(global.io());
